@@ -358,10 +358,8 @@ def recent_events():
 @app.websocket("/ws/recommend/{user_id}")
 async def ws_recommend(websocket: WebSocket, user_id: int):
     await websocket.accept()
-    payload = _recs_payload(user_id)
-    if payload:
-        await websocket.send_text(json.dumps(payload))
-
+    # No initial send here — the UI already fetched recs via HTTP on mount;
+    # this socket only pushes refreshed lists after events.
     _ws_clients.setdefault(user_id, set()).add(websocket)
     try:
         while True:
