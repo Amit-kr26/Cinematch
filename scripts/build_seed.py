@@ -101,6 +101,23 @@ def main() -> None:
           p.get("score", 0.0))
          for i, p in enumerate(popular[:100])])
 
+    import base64
+    n_factors = 0
+    for key, entry in snap.items():
+        if not key.startswith("item_factor:") or entry["type"] != "bytes":
+            continue
+        conn.execute("INSERT OR REPLACE INTO item_factor VALUES (?,?)",
+                     (int(key.split(":")[1]), base64.b64decode(entry["value"])))
+        n_factors += 1
+
+    n_sims = 0
+    for key, entry in snap.items():
+        if not key.startswith("item_sim:") or entry["type"] != "string":
+            continue
+        conn.execute("INSERT OR REPLACE INTO item_sim VALUES (?,?)",
+                     (int(key.split(":")[1]), entry["value"]))
+        n_sims += 1
+
     conn.commit()
     conn.close()
 
@@ -109,7 +126,8 @@ def main() -> None:
         dst.write(src.read())
     db_path.unlink()
     print(f"Seed written: {SEED_OUT} "
-          f"({SEED_OUT.stat().st_size / 1_048_576:.1f} MB, {n_users} users)")
+          f"({SEED_OUT.stat().st_size / 1_048_576:.1f} MB, {n_users} users, "
+          f"{n_factors} item factors, {n_sims} sim maps)")
 
 
 if __name__ == "__main__":

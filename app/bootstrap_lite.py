@@ -49,6 +49,23 @@ CREATE TABLE IF NOT EXISTS popular (
     genres   TEXT NOT NULL,
     score    REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS item_factor (
+    movie_id INTEGER PRIMARY KEY,
+    factor   BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS item_sim (
+    movie_id  INTEGER PRIMARY KEY,
+    neighbors TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    movie_id   INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    rating     REAL,
+    ts         REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id, id);
 """
 
 
@@ -123,6 +140,9 @@ def _train_and_seed() -> None:
                 userCol="userId", itemCol="movieId", ratingCol="rating",
                 coldStartStrategy="drop").fit(ratings)
     recs = model.recommendForAllUsers(10).collect()
+    import numpy as np
+    factors = [(int(row.id), np.array(row.features, dtype=np.float32).tobytes())
+               for row in model.itemFactors.collect()]
     spark.stop()
 
     movies = _load_movies(ml_dir)
@@ -150,6 +170,8 @@ def _train_and_seed() -> None:
              "score":    float(r.rating)}
             for r in row.recommendations]))
          for row in recs])
+    conn.executemany(
+        "INSERT OR REPLACE INTO item_factor VALUES (?,?)", factors)
     popular = sorted(
         ({"movie_id": mid, **movies.get(mid, {"title": "?", "genres": ""}),
           "score": round((sums[mid] / cnt) * math.log(cnt + 1), 4)}

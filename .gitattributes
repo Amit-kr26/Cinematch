@@ -1,0 +1,1 @@
+app/seed/*.sqlite.gz filter=lfs diff=lfs merge=lfs -text
