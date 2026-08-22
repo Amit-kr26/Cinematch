@@ -4,24 +4,105 @@ Inputs (produced by the full deployment on the main branch):
   --snapshot  Redis snapshot JSON (infra/hf/dump_redis.py output)
   --movies    MovieLens ml-1m/movies.dat
   --ratings   MovieLens ml-1m/ratings.dat
+Optional:
+  --tmdb-key  fetch posters/backdrops/overviews for every movie missing
+              cached art and bake them into the seed (HF Spaces FS is
+              ephemeral — anything not in the seed is lost on restart)
 
 Usage:
   python scripts/build_seed.py \
       --snapshot data/redis_snapshot.json.gz \
-      --movies data/ml-1m/movies.dat --ratings data/ml-1m/ratings.dat
+      --movies data/ml-1m/movies.dat --ratings data/ml-1m/ratings.dat \
+      [--tmdb-key $TMDB_API_KEY]
 """
 import argparse
 import gzip
 import json
 import math
+import os
 import re
 import sqlite3
 import tempfile
+import time
+import urllib.parse
+import urllib.request
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 SEED_OUT = Path(__file__).resolve().parent.parent / "app" / "seed" / "als_seed.sqlite.gz"
-YEAR_RE = re.compile(r"\((\d{4})\)\s*$")
+YEAR_RE    = re.compile(r"\((\d{4})\)\s*$")
+ARTICLE_RE = re.compile(
+    r"^(.*),\s+(The|A|An|Les|La|Le|Los|Las|Un|Une|Der|Die|Das|Il|Lo)$", re.I)
+
+
+def clean_title(raw: str) -> str:
+    stripped = YEAR_RE.sub("", raw or "").strip()
+    m = ARTICLE_RE.match(stripped)
+    return f"{m.group(2)} {m.group(1)}" if m else stripped
+
+
+def tmdb_search(key: str, title: str, year: int | None) -> dict | None:
+    params = {"api_key": key, "query": clean_title(title)}
+    if year:
+        params["year"] = year
+    url = ("https://api.themoviedb.org/3/search/movie?"
+           + urllib.parse.urlencode(params))
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(url, timeout=10) as r:
+                results = json.load(r).get("results", [])
+            if not results and year:
+                params.pop("year", None)
+                url = ("https://api.themoviedb.org/3/search/movie?"
+                       + urllib.parse.urlencode(params))
+                continue
+            best = results[0] if results else None
+            if not best:
+                return {}
+            out = {"poster":   "https://image.tmdb.org/t/p/w342" + best["poster_path"]
+                              if best.get("poster_path") else None,
+                   "backdrop": "https://image.tmdb.org/t/p/w780" + best["backdrop_path"]
+                              if best.get("backdrop_path") else None,
+                   "overview": best.get("overview") or "",
+                   "tmdb_rating": best.get("vote_average") or 0.0}
+            if not out["poster"] and year:      # retry once without the year
+                time.sleep(0.2)
+                params = {"api_key": key, "query": clean_title(title)}
+                with urllib.request.urlopen(
+                        "https://api.themoviedb.org/3/search/movie?"
+                        + urllib.parse.urlencode(params), timeout=10) as r:
+                    alt = (json.load(r).get("results") or [{}])[0]
+                if alt.get("poster_path"):
+                    out["poster"] = ("https://image.tmdb.org/t/p/w342"
+                                     + alt["poster_path"])
+            return out
+        except Exception:
+            if attempt == 2:
+                return None
+            time.sleep(0.5 * (attempt + 1))
+    return None
+
+
+def enrich_missing(key: str, movies: dict[int, dict],
+                   tmdb_map: dict[int, dict]) -> int:
+    todo = [mid for mid, m in movies.items() if not tmdb_map.get(mid, {}).get("poster")]
+    print(f"TMDB sweep: fetching art for {len(todo)} movies …")
+    done = 0
+
+    def work(mid: int):
+        m = movies[mid]
+        return mid, tmdb_search(key, m["title"], m.get("year"))
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        for i, (mid, data) in enumerate(pool.map(work, todo), 1):
+            if data:
+                tmdb_map[mid] = {**tmdb_map.get(mid, {}), **data}
+                done += 1
+            if i % 250 == 0:
+                print(f"  {i}/{len(todo)} ({done} matched)")
+    print(f"TMDB sweep complete: {done}/{len(todo)} matched")
+    return done
 
 
 def main() -> None:
@@ -29,6 +110,8 @@ def main() -> None:
     parser.add_argument("--snapshot", required=True)
     parser.add_argument("--movies", required=True)
     parser.add_argument("--ratings", required=True)
+    parser.add_argument("--tmdb-key", default=os.getenv("TMDB_API_KEY", ""),
+                        help="fetch art for movies missing cached TMDB entries")
     args = parser.parse_args()
 
     opener = gzip.open if str(args.snapshot).endswith(".gz") else open
@@ -66,6 +149,9 @@ def main() -> None:
                 tmdb[int(key.split(":")[1])] = json.loads(entry["value"])
             except (ValueError, KeyError):
                 pass
+
+    if args.tmdb_key:
+        enrich_missing(args.tmdb_key, movies, tmdb)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         db_path = Path(tmp.name)
