@@ -8,6 +8,7 @@ export function useRecommendations(userId: number | null, pollMs = 5000) {
   const [error, setError]        = useState<string | null>(null)
   const [wsConnected, setWsConn] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
+  const lastPushAt = useRef(0)
 
   // WebSocket path — receives push updates when Spark writes new recs
   useEffect(() => {
@@ -20,6 +21,7 @@ export function useRecommendations(userId: number | null, pollMs = 5000) {
     ws.onerror   = () => setWsConn(false)
     ws.onmessage = (e) => {
       try {
+        lastPushAt.current = Date.now()
         const parsed = JSON.parse(e.data)
         // Streaming job may push a bare recs array; wrap it into the response envelope.
         const next: RecsResponse = Array.isArray(parsed)
@@ -36,6 +38,7 @@ export function useRecommendations(userId: number | null, pollMs = 5000) {
   // HTTP polling fallback — only active when WebSocket is not connected
   const fetchRecs = useCallback(async () => {
     if (!userId) return
+    if (Date.now() - lastPushAt.current < 2500) return   // WS already delivered fresh recs
     setLoading(true)
     try {
       const resp = await axios.get<RecsResponse>(`/recommend/${userId}`)
