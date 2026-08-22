@@ -27,7 +27,7 @@ export default function App() {
   const [selectedRec, setSelectedRec] = useState<Rec | null>(null)
 
   const { data, loading, error, wsConnected, refetch } = useRecommendations(activeId)
-  const stats = useStats()
+  const { stats, refresh: refreshStats } = useStats()
   const { stage, sparkCountdown, fireEvent, notifyRedisUpdated } = usePipelineAnimation()
   const { movies, total, hasMore, loading: browseLoading, loadingMore, loadMore } =
     useMovies(debouncedSearch, genre)
@@ -73,8 +73,9 @@ export default function App() {
       firedAt:   new Date(),
     }])
     pendingPipeline.current = true
-    setTimeout(refetch, 3000)
-  }, [activeId, fireEvent, refetch])
+    refreshStats()                       // events counter updates instantly
+    setTimeout(() => { refetch(); refreshStats() }, 3000)
+  }, [activeId, fireEvent, refetch, refreshStats])
 
   const handleHome = () => {
     setSearch('')
