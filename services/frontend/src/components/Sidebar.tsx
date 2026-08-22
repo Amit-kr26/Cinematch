@@ -50,7 +50,7 @@ export function Sidebar({ sessionEvents }: Props) {
     const poll = async () => {
       try {
         const r = await axios.get<{ events: FeedEvent[] }>('/events/recent')
-        if (!cancelled) setFeed(r.data.events.slice(0, 8))
+        if (!cancelled) setFeed(r.data.events.slice(0, 30))
       } catch { /* best-effort */ }
     }
     poll()
@@ -99,21 +99,23 @@ export function Sidebar({ sessionEvents }: Props) {
       )}
 
       {/* Live feed */}
-      <div className="flex-1 px-5 py-4 overflow-hidden border-b border-navy-700">
-        <div className="flex items-center gap-2 mb-3">
+      <div className="flex-1 min-h-0 px-5 py-4 border-b border-navy-700 flex flex-col">
+        <div className="flex items-center gap-2 mb-3 flex-shrink-0">
           <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${feed.length > 0 ? 'bg-emerald-400 animate-ping' : 'bg-slate-600'}`} />
           <span className="text-xs uppercase tracking-widest text-slate-500 font-semibold">Live Feed</span>
         </div>
         {feed.length === 0 ? (
           <p className="text-slate-600 text-sm">No events yet. Hover a card to fire one.</p>
         ) : (
-          <div className="flex flex-col gap-2 font-mono overflow-y-auto max-h-48">
-            {feed.map((ev, i) => (
-              <div key={i} className={`text-xs leading-snug ${i === 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
-                [{formatTime(ev.timestamp)}] u{ev.user_id}{' '}
-                {ev.event_type === 'rating' ? `★${ev.rating}` : ev.event_type} → {ev.movie_id}
-              </div>
-            ))}
+          <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+            <div className="flex flex-col gap-2 font-mono">
+              {feed.map((ev, i) => (
+                <div key={i} className={`text-xs leading-snug ${i === 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+                  [{formatTime(ev.timestamp)}] u{ev.user_id}{' '}
+                  {ev.event_type === 'rating' ? `★${ev.rating}` : ev.event_type} → {ev.movie_id}
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
