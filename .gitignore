@@ -1,0 +1,32 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+*.zip
+*.egg-info/
+dist/
+node_modules/
+services/frontend/dist/
+.worktrees/
+
+# Secrets — never commit. (.env.example IS committed as config template)
+.env
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
+
+# Tooling caches / local dotfiles (negations must come last)
+.*
+!.gitignore
+!.github/
+!.gitattributes
+!.gitconfig
+!.env.example
+!.python-version
+!.gitattributes
+
+# MovieLens dataset (downloaded at bootstrap, never committed)
+ml-1m/
+**/ml-1m/

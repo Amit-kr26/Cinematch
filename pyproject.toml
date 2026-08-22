@@ -1,0 +1,34 @@
+[project]
+name = "movie-recsys"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.uv.workspace]
+members = [
+    "services/spark-jobs",
+    "services/event-simulator",
+    "services/api",
+    "tests",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "setuptools>=82.0.1",
+    "ruff>=0.8.0",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "httpx>=0.28.1",
+    "fakeredis>=2.35.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
