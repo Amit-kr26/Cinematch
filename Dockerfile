@@ -14,7 +14,9 @@ RUN pip install --no-cache-dir \
     "fastapi>=0.111" \
     "uvicorn[standard]>=0.30" \
     "prometheus-client>=0.20" \
-    "pydantic>=2.7"
+    "pydantic>=2.7" \
+    "httpx>=0.27" \
+    "numpy>=1.26"
 
 COPY app/ ./app/
 COPY --from=ui /ui/dist ./app/static

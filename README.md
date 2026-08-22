@@ -20,9 +20,13 @@ Cold start is instant: recommendations ship pre-trained in `app/seed/als_seed.sq
 | | Full (`main`) | Lite (this branch) |
 |---|---|---|
 | Serving | FastAPI · 4-layer fallback | FastAPI · 3-layer fallback |
-| Personalization | Spark streaming re-rank every 10 s | ALS baseline promoted on engagement |
+| Personalization | Spark streaming re-rank every 10 s | in-process numpy re-rank on every event (same scoring math) |
 | Infra | Kafka · Redis · Postgres · MLflow | one SQLite file |
-| Posters | live TMDB enrichment | 626 cached entries from seed |
+| Posters | live TMDB enrichment | seed art + live TMDB when `TMDB_API_KEY` secret is set |
+
+Events are not just logged: each `/simulate` recomputes the user's top-10
+(time-decayed preference vector over ALS item factors + genre bonus +
+diversity penalty) and pushes it to any open WebSocket instantly.
 
 ## Endpoints
 
@@ -35,6 +39,7 @@ Cold start is instant: recommendations ship pre-trained in `app/seed/als_seed.sq
 | `PORT` | `7860` | HTTP port (HF Spaces sets this) |
 | `DB_PATH` | `/data/app.db` | SQLite database location |
 | `DATA_DIR` | `/data` | working dir if retraining |
+| `TMDB_API_KEY` | unset | optional: fetch missing posters/backdrops/overviews live |
 
 ## Regenerating the seed
 
