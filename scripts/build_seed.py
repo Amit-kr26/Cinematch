@@ -48,8 +48,8 @@ def main() -> None:
     with open(args.ratings, encoding="latin-1") as f:
         for line in f:
             _, mid, rating, _ = line.strip().split("::")
-            counts[mid] += 1
-            sums[mid] += float(rating)
+            counts[int(mid)] += 1
+            sums[int(mid)] += float(rating)
 
     def pop(mid: int) -> float:
         return round((sums[mid] / counts[mid]) * math.log(counts[mid] + 1), 4) \
