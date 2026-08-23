@@ -137,7 +137,7 @@ score   = dot(pref, item_factor) + 0.15 × genre_overlap
 
 ## MLOps & Observability
 
-**A/B testing** — deterministic hash bucketing (no state). Control = ALS baseline; treatment = hybrid re-ranking. Impressions + engagements tracked per variant → `GET /stats/ab`.
+**A/B testing** — deterministic hash bucketing (no state), and the assignment genuinely gates serving: **control** users always receive the static ALS bootstrap order (`als_candidates:{uid}`) and never the Spark-personalized cache; **treatment** users receive event-driven re-ranked lists (`recs:{uid}`), falling back through durable/static layers when absent. Groups diverge only after events trigger re-ranking — an un-evented treatment user also sees the ALS baseline. Impressions + engagements tracked per variant → `GET /stats/ab`. The UI shows your group and what it means (status-bar chip + banner above Top Picks).
 
 **Model hot-reload** — every 60 batches (~10 min), streaming job checks `model:version` in Redis. Changed → reloads item factors in-place, no job restart.
 
