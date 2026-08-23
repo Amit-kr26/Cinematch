@@ -36,10 +36,25 @@ describe('RecommendationList', () => {
     expect(screen.getByText('Movie Beta')).toBeInTheDocument()
   })
 
-  it('shows ALS baseline banner for als_baseline source', () => {
+  it('shows control-group banner regardless of source', () => {
     render(<RecommendationList data={makeData('als_baseline')} loading={false} error={null}
       onFireEvent={vi.fn()} onCardClick={vi.fn()} />)
-    expect(screen.getByText(/Static ALS baseline/)).toBeInTheDocument()
+    expect(screen.getByText(/Control group/)).toBeInTheDocument()
+    expect(screen.getByText(/do not reorder this list/)).toBeInTheDocument()
+  })
+
+  it('shows treatment-personalized banner for re-ranked sources', () => {
+    const data: RecsResponse = { ...makeData('redis'), variant: 'treatment' }
+    render(<RecommendationList data={data} loading={false} error={null}
+      onFireEvent={vi.fn()} onCardClick={vi.fn()} />)
+    expect(screen.getByText(/re-ranked from your events/)).toBeInTheDocument()
+  })
+
+  it('shows treatment-baseline banner when nothing re-ranked yet', () => {
+    const data: RecsResponse = { ...makeData('als_baseline'), variant: 'treatment' }
+    render(<RecommendationList data={data} loading={false} error={null}
+      onFireEvent={vi.fn()} onCardClick={vi.fn()} />)
+    expect(screen.getByText(/nothing re-ranked\s+yet/i)).toBeInTheDocument()
   })
 
   it('shows empty state for source=empty', () => {

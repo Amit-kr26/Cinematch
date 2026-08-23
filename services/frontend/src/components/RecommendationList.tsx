@@ -74,14 +74,29 @@ export function RecommendationList({ data, loading, error, onFireEvent, onCardCl
         <p className="text-slate-500 text-sm mb-5">{formatUpdatedAgo(data.updated_at)}</p>
       )}
 
-      {data.source === 'als_baseline' && (
+      {data.variant === 'control' ? (
+        <div className="mb-5 rounded-lg border border-purple-500/30 bg-purple-500/5 px-5 py-3.5">
+          <p className="text-purple-300 text-sm font-medium">
+            Experiment &middot; Control group — you are seeing the static ALS model ranking.
+            Your events are recorded for measurement but do not reorder this list.
+          </p>
+        </div>
+      ) : data.source === 'redis' || data.source === 'postgres' ? (
+        <div className="mb-5 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-5 py-3.5">
+          <p className="text-emerald-300 text-sm font-medium">
+            Experiment &middot; Treatment group — this order was re-ranked from your events
+            (Kafka &rarr; Spark, ~10 s cycles).
+          </p>
+        </div>
+      ) : (
         <div className="mb-5 rounded-lg border border-amber-500/30 bg-amber-500/5 px-5 py-3.5 flex items-start gap-3">
           <svg className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <p className="text-amber-300 text-sm font-medium">
-            Static ALS baseline — hover a card and rate or view to trigger live re-ranking via Kafka → Spark.
+            Experiment &middot; Treatment group on the static ALS baseline — nothing re-ranked
+            yet. Hover a card and rate or view to trigger live re-ranking via Kafka &rarr; Spark.
           </p>
         </div>
       )}

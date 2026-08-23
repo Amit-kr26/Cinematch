@@ -25,6 +25,13 @@ export default function App() {
   const [genre, setGenre]             = useState('All')
   const [sessionEvents, setSessionEvents] = useState<SessionEvent[]>([])
   const [selectedRec, setSelectedRec] = useState<Rec | null>(null)
+  const [mode, setMode] = useState<'full' | 'lite' | null>(null)
+
+  useEffect(() => {
+    axios.get<{ mode?: string }>('/health')
+      .then((r) => setMode(r.data?.mode === 'lite' ? 'lite' : 'full'))
+      .catch(() => {})
+  }, [])
 
   const { data, loading, error, wsConnected, refetch } = useRecommendations(activeId)
   const { stats, refresh: refreshStats } = useStats()
@@ -91,7 +98,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen h-screen bg-navy-950 text-white flex flex-col">
-      <StatusBar source={data?.source ?? null} stats={stats}
+      <StatusBar source={data?.source ?? null} stats={stats} mode={mode}
                  variant={data?.variant ?? null} wsConnected={wsConnected} />
       <PipelineBar stage={stage} sparkCountdown={sparkCountdown} />
       <TopNav
