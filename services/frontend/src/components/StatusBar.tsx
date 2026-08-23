@@ -6,6 +6,7 @@ interface Props {
   stats:       StatsData | null
   variant:     'control' | 'treatment' | null
   wsConnected: boolean
+  mode?:       'full' | 'lite' | null
 }
 
 const sourceLabel: Record<string, { label: string; color: string }> = {
@@ -16,12 +17,17 @@ const sourceLabel: Record<string, { label: string; color: string }> = {
   empty:              { label: 'No recs',      color: 'text-slate-400 bg-slate-800/30 border-slate-700/40' },
 }
 
+const AB_LABEL = {
+  control:   { short: 'A/B · Control — static ALS',   tip: 'Control group: you always see the static ALS model ranking; events are measured, not applied.' },
+  treatment: { short: 'A/B · Treatment — personalized', tip: 'Treatment group: your list is re-ranked from your events via Kafka → Spark.' },
+} as const
+
 function safePct(v: number | undefined | null): number {
   if (v == null || !Number.isFinite(v) || Number.isNaN(v)) return 0
   return Math.round(v * 100)
 }
 
-export function StatusBar({ source, stats, variant, wsConnected }: Props) {
+export function StatusBar({ source, stats, variant, wsConnected, mode }: Props) {
   const src = source ? sourceLabel[source] : null
 
   return (
@@ -56,9 +62,12 @@ export function StatusBar({ source, stats, variant, wsConnected }: Props) {
             {stats.total_events} events
           </span>
         )}
-        {variant && (
-          <span className="px-3.5 py-1.5 rounded-full text-sm font-medium border text-purple-400 bg-purple-900/20 border-purple-700/30 transition-all duration-500 hidden lg:inline-flex">
-            {variant === 'treatment' ? 'A/B: Treatment' : 'A/B: Control'}
+        {variant && mode !== 'lite' && (
+          <span
+            title={AB_LABEL[variant].tip}
+            className="px-3.5 py-1.5 rounded-full text-sm font-medium border text-purple-400 bg-purple-900/20 border-purple-700/30 transition-all duration-500 hidden lg:inline-flex cursor-help"
+          >
+            {AB_LABEL[variant].short}
           </span>
         )}
         <span className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium border transition-all duration-500 ${
