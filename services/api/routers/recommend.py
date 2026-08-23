@@ -3,7 +3,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Literal
 
 import tmdb
 from deps import get_http, get_pg, get_redis
@@ -20,17 +20,16 @@ def get_variant(user_id: int, traffic_split: int = 50) -> str:
 
 
 class Rec(BaseModel):
-    movie_id: int
-    title:    str
-    genres:   str
-    score:    float
-    # TMDB enrichment (optional — populated by tmdb.enrich)
-    poster:      Optional[str] = None
-    backdrop:    Optional[str] = None
-    overview:    str = ""
-    year:        Optional[int] = None
-    tmdb_rating: float = 0.0
-    tmdb_id:     Optional[int] = None
+    movie_id:     int
+    title:        str
+    genres:       str
+    score:        float
+    year:         int | None = None
+    poster:       str | None = None
+    backdrop:     str | None = None
+    overview:     str = ""
+    tmdb_rating:  float = 0.0
+    tmdb_id:      int | None = None
 
 
 class RecsResponse(BaseModel):
@@ -50,9 +49,20 @@ async def recommend(user_id: int = Path(gt=0), redis=Depends(get_redis),
     variant = get_variant(user_id)
     await redis.incr(f"ab:impressions:{variant}")
 
-    # 1. Redis (fastest path)
-    raw = await redis.get(f"recs:{user_id}")
-    if raw:
+    # ── Serving layers ────────────────────────────────────────────────────────
+    # The A/B experiment actually gates what users receive:
+    #   treatment → Spark-personalized cache first, then durable/static layers
+    #   control   → NEVER the personalized cache; static ALS bootstrap order
+    #               first, then durable copies as pure availability fallbacks.
+    # Asymmetry by design: an un-evented treatment user also sees the ALS
+    # baseline (nothing has been re-ranked yet); groups diverge only after
+    # events trigger re-ranking.
+
+    async def serve_personalized() -> RecsResponse | None:
+        """Treatment layer 1: fresh Spark re-ranked recs from Redis."""
+        raw = await redis.get(f"recs:{user_id}")
+        if not raw:
+            return None
         recs = json.loads(raw)
         ts_raw = await redis.get(f"recs:{user_id}:ts")
         updated_at = ts_raw.decode() if ts_raw else now
@@ -65,36 +75,40 @@ async def recommend(user_id: int = Path(gt=0), redis=Depends(get_redis),
         return RecsResponse(user_id=user_id, recs=recs, source="redis",
                             updated_at=updated_at, variant=variant)
 
-    # 2. PostgreSQL fallback (skip if recs are stale: > 30 min old)
-    if pg is not None:
+    async def serve_postgres() -> RecsResponse | None:
+        """Durable layer — skipped when stale (> 30 min)."""
+        if pg is None:
+            return None
         async with pg.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT recs, updated_at FROM user_recs WHERE user_id = $1", user_id
             )
-        if row:
-            updated_at_dt = row["updated_at"]
-            if updated_at_dt is not None:
-                age_seconds = (datetime.now(timezone.utc)
-                               - updated_at_dt.astimezone(timezone.utc)).total_seconds()
-            else:
-                age_seconds = 0.0  # NULL updated_at = bootstrap-seeded data, always fresh
+        if not row:
+            return None
+        updated_at_dt = row["updated_at"]
+        if updated_at_dt is not None:
+            age_seconds = (datetime.now(timezone.utc)
+                           - updated_at_dt.astimezone(timezone.utc)).total_seconds()
+        else:
+            age_seconds = 0.0  # NULL updated_at = bootstrap-seeded data, always fresh
+        if age_seconds > 1800:
+            logger.info("postgres_recs_stale user_id=%d age_s=%.0f, falling through",
+                        user_id, age_seconds)
+            return None
+        recs = json.loads(row["recs"])
+        updated_at = updated_at_dt.isoformat() if updated_at_dt else now
+        logger.info("cache_hit=false fallback_source=postgres user_id=%d age_s=%.0f latency_ms=%.1f",
+                    user_id, age_seconds, (time.monotonic() - t0) * 1000)
+        await redis.incr("stats:requests_total")
+        await tmdb.enrich(redis, http, recs)
+        return RecsResponse(user_id=user_id, recs=recs, source="postgres",
+                            updated_at=updated_at, variant=variant)
 
-            if age_seconds <= 1800:  # 30 min freshness threshold
-                recs = json.loads(row["recs"])
-                updated_at = updated_at_dt.isoformat() if updated_at_dt else now
-                logger.info("cache_hit=false fallback_source=postgres user_id=%d age_s=%.0f",
-                            user_id, age_seconds)
-                await redis.incr("stats:requests_total")
-                await tmdb.enrich(redis, http, recs)
-                return RecsResponse(user_id=user_id, recs=recs, source="postgres",
-                                    updated_at=updated_at, variant=variant)
-            else:
-                logger.info("postgres_recs_stale user_id=%d age_s=%.0f, falling through",
-                            user_id, age_seconds)
-
-    # 3. ALS baseline fallback (never empty if bootstrap ran)
-    cand_raw = await redis.get(f"als_candidates:{user_id}")
-    if cand_raw:
+    async def serve_als() -> RecsResponse | None:
+        """Static layer — bootstrap-precomputed ALS top-10, never event-touched."""
+        cand_raw = await redis.get(f"als_candidates:{user_id}")
+        if not cand_raw:
+            return None
         candidates = json.loads(cand_raw)
         recs = [{"movie_id": c["movie_id"], "title": c.get("title", ""),
                  "genres": c.get("genres", ""), "score": c.get("als_score", 0.0)}
@@ -105,9 +119,11 @@ async def recommend(user_id: int = Path(gt=0), redis=Depends(get_redis),
         return RecsResponse(user_id=user_id, recs=recs, source="als_baseline",
                             updated_at=now, variant=variant)
 
-    # 4. Global popularity fallback (cold-start: user not in MovieLens)
-    popular_raw = await redis.get("popular:global")
-    if popular_raw:
+    async def serve_popular() -> RecsResponse | None:
+        """Cold-start layer — global Bayesian popularity."""
+        popular_raw = await redis.get("popular:global")
+        if not popular_raw:
+            return None
         popular = json.loads(popular_raw)
         recs = [{"movie_id": c["movie_id"], "title": c.get("title", ""),
                  "genres": c.get("genres", ""), "score": c.get("score", 0.0)}
@@ -117,6 +133,15 @@ async def recommend(user_id: int = Path(gt=0), redis=Depends(get_redis),
         await tmdb.enrich(redis, http, recs)
         return RecsResponse(user_id=user_id, recs=recs, source="cold_start_popular",
                             updated_at=now, variant=variant)
+
+    if variant == "control":
+        served = (await serve_als() or await serve_postgres()
+                  or await serve_popular())
+    else:
+        served = (await serve_personalized() or await serve_postgres()
+                  or await serve_als() or await serve_popular())
+    if served is not None:
+        return served
 
     logger.warning("No recs found for user_id=%d", user_id)
     await redis.incr("stats:requests_total")

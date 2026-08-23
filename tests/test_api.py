@@ -6,11 +6,32 @@ import fakeredis
 import fakeredis.aioredis
 import pytest
 from httpx import ASGITransport, AsyncClient
+from routers.recommend import get_variant
 
 TOP10 = [
     {"movie_id": i, "title": f"Movie {i}", "genres": "Action", "score": float(10 - i)}
     for i in range(1, 11)
 ]
+
+# Distinct orderings used to prove which layer served the response.
+PERSONALIZED = [  # what Spark would write to recs:{uid} after events
+    {"movie_id": 100 + i, "title": f"Personalized {100 + i}", "genres": "Drama",
+     "score": float(20 - i)}
+    for i in range(10)
+]
+BASELINE = [  # static bootstrap als_candidates:{uid}
+    {"movie_id": i, "title": f"Baseline {i}", "genres": "Comedy",
+     "als_score": float(i), "score": float(i)}
+    for i in range(1, 11)
+]
+
+
+def _uid_for(variant: str, start: int = 1) -> int:
+    """Smallest uid >= start assigned to the given variant (hash is stable)."""
+    uid = start
+    while get_variant(uid) != variant:
+        uid += 1
+    return uid
 
 
 @pytest.fixture
@@ -23,7 +44,8 @@ def fake_redis_with_recs():
     server = fakeredis.FakeServer()
     sync_r = fakeredis.FakeRedis(server=server, decode_responses=False)
     async_r = fakeredis.aioredis.FakeRedis(server=server, decode_responses=False)
-    sync_r.set("recs:1", json.dumps(TOP10).encode())
+    # user must be in the treatment bucket for the hot cache to be consulted
+    sync_r.set(f"recs:{_uid_for('treatment')}", json.dumps(TOP10).encode())
     return async_r
 
 
@@ -72,16 +94,19 @@ async def client_all_miss(fake_redis):
 
 
 async def test_recommend_redis_hit(client_redis_hit):
-    resp = await client_redis_hit.get("/recommend/1")
+    from routers.recommend import get_variant
+    uid = _uid_for("treatment")
+    resp = await client_redis_hit.get(f"/recommend/{uid}")
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["recs"]) == 10
     assert data["source"] == "redis"
+    assert data["variant"] == get_variant(uid)
     assert data["recs"][0]["movie_id"] == 1
 
 
 async def test_recommend_response_schema(client_redis_hit):
-    resp = await client_redis_hit.get("/recommend/1")
+    resp = await client_redis_hit.get(f"/recommend/{_uid_for('treatment')}")
     rec = resp.json()["recs"][0]
     assert "movie_id" in rec
     assert "title" in rec
@@ -131,6 +156,60 @@ async def test_recommend_cold_start_popular(client_cold_start):
     data = resp.json()
     assert data["source"] == "cold_start_popular"
     assert len(data["recs"]) == 10
+
+
+@pytest.fixture
+async def client_ab(fake_redis):
+    """Both variants fully provisioned: personalized cache AND static baseline."""
+    from main import create_app
+
+    control = _uid_for("control")
+    treat = _uid_for("treatment")
+    for uid in (control, treat):
+        await fake_redis.set(f"recs:{uid}", json.dumps(PERSONALIZED).encode())
+        await fake_redis.set(f"als_candidates:{uid}", json.dumps(BASELINE).encode())
+
+    app = create_app()
+    app.state.redis   = fake_redis
+    app.state.pg_pool = None
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+
+
+async def test_ab_control_gets_baseline_not_personalized(client_ab):
+    """Control must NEVER receive the Spark-personalized recs:{uid} cache —
+    even when it is present and fresh — and always sees the static ALS order."""
+    uid = _uid_for("control")
+    resp = await client_ab.get(f"/recommend/{uid}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["variant"] == "control"
+    assert data["source"] == "als_baseline"
+    assert [r["movie_id"] for r in data["recs"]] == [b["movie_id"] for b in BASELINE]
+    # impressions still counted for the control group
+    impressions = await client_ab._transport.app.state.redis.get(
+        "ab:impressions:control")
+    assert int(impressions) >= 1
+
+
+async def test_ab_treatment_gets_personalized_cache(client_ab):
+    """Treatment receives the Spark re-ranked list from the hot cache."""
+    uid = _uid_for("treatment")
+    resp = await client_ab.get(f"/recommend/{uid}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["variant"] == "treatment"
+    assert data["source"] == "redis"
+    assert [r["movie_id"] for r in data["recs"]] == [p["movie_id"] for p in PERSONALIZED]
+
+
+async def test_ab_groups_diverge_only_via_cache(client_ab):
+    """With identical provisioning, the ONLY difference between groups is the
+    personalized cache: control falls to the static layer, treatment doesn't."""
+    c = (await client_ab.get(f"/recommend/{_uid_for('control')}")).json()
+    t = (await client_ab.get(f"/recommend/{_uid_for('treatment')}")).json()
+    assert (c["source"], t["source"]) == ("als_baseline", "redis")
+    assert c["recs"][0]["movie_id"] != t["recs"][0]["movie_id"]
 
 
 async def test_health_returns_ok(client_redis_hit):
