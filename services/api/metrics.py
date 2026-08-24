@@ -1,12 +1,5 @@
 # services/api/metrics.py
-"""Central Prometheus metric definitions.
-
-Lives in its own module so every importer shares one registration —
-re-importing main.py under tests used to require a private-registry
-fallback dance (_get_or_create reaching into REGISTRY._names_to_collectors).
-The fallback is kept for safety when modules are reloaded, but normal
-operation never needs it.
-"""
+"""Shared Prometheus metric definitions."""
 from prometheus_client import (
     REGISTRY,
     Counter,

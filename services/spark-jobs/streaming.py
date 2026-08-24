@@ -169,11 +169,6 @@ def rerank_candidates(pref_vector: np.ndarray, candidates: list[dict],
         scored.append({**cand, "score": cf_score + genre_bonus})
     scored.sort(key=lambda x: x["score"], reverse=True)
 
-    # Soft diversity: exponential score penalty for over-represented primary genres.
-    # Sign-safe: CF dot products against a unit pref vector are frequently
-    # negative, and multiplying a negative score by 0.7 would *raise* it.
-    # Scaling |score| preserves ordering intent for both signs.
-    # Applies from the 4th title of a genre onward (4th ×0.7, 5th ×0.49 …).
     genre_counts: dict[str, int] = {}
     result = []
     for item in scored:
@@ -281,10 +276,6 @@ def process_batch(batch_df, batch_id: int, r: redis_lib.Redis,
         pipe.get(f"als_candidates:{uid}")
     prefetched_cands = dict(zip(user_ids, pipe.execute()))
 
-    # NOTE on integrity: only the PostgreSQL writes are transactional, and
-    # each user commits independently. Redis state/recs/publish are NOT
-    # rolled back on failure — accepted because serving reads Redis and
-    # every write is idempotent.
     written = 0
     ttl = 300 + random.randint(-30, 30)   # jitter avoids synchronized expiry
     ts_iso = datetime.now(timezone.utc).isoformat()
@@ -292,8 +283,6 @@ def process_batch(batch_df, batch_id: int, r: redis_lib.Redis,
     cur = pg_conn.cursor()
     try:
         for user_id, new_events in events_by_user.items():
-            # Per-user isolation: one bad user (corrupt state, Redis hiccup,
-            # bad JSON) must not abort the rest of the micro-batch.
             try:
                 new_events = [e for e in new_events if now_ts - e["ts"] <= 300]
                 if not new_events:
@@ -345,8 +334,6 @@ def process_batch(batch_df, batch_id: int, r: redis_lib.Redis,
                                           user_genre_prefs=genre_prefs, top_n=10)
 
                 r.set(f"recs:{user_id}", json.dumps(top10), ex=ttl)
-                # Freshness timestamp consumed by /recommend — without it the
-                # UI would always show "Updated just now".
                 r.set(f"recs:{user_id}:ts", ts_iso, ex=ttl)
                 r.publish(f"recs_update:{user_id}", "1")
 
@@ -374,13 +361,11 @@ def process_batch(batch_df, batch_id: int, r: redis_lib.Redis,
 
 
 def ensure_topic(bootstrap_servers: str, topic: str, num_partitions: int = 3) -> None:
-    """Create the Kafka topic and wait until its metadata becomes visible.
+    """Create the topic and wait until its metadata becomes visible.
 
-    Without this wait, Spark's KafkaMicroBatchStream raises
-    UnknownTopicOrPartitionException during initial offset fetch. Note: the
-    readiness check confirms partitions EXIST — it does not verify that every
-    partition has an elected leader (metadata propagation usually wins that
-    race; a leaderless partition would still fail the first offset fetch).
+    Without this wait, Spark's initial offset fetch can raise
+    UnknownTopicOrPartitionException. The readiness check confirms partition
+    existence, not per-partition leader election.
     """
     from kafka import KafkaConsumer
 

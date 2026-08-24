@@ -13,8 +13,7 @@ Event schema (JSON, per Kafka message value):
 
 Kafka producer config:
   - Partition key: str(user_id) — ensures per-user ordering within a partition
-  - retries=5, acks="all" (at-least-once; idempotence NOT enabled — duplicates
-    are harmless because every downstream write is idempotent)
+  - retries=5, acks="all" (at-least-once delivery)
 
 Package: kafka-python-ng (drop-in for kafka-python — imports as `from kafka import ...`)
 """

@@ -35,8 +35,6 @@ export function MovieCard({ rec, index, onFireEvent, onCardClick }: Props) {
   const year       = extractYear(rec.title)
   const cleanTitle = formatTitle(rec.title)
   const hasScore   = rec.score != null
-  // Server computes a per-layer normalized badge (score_pct); the local
-  // normalizeScore is only a fallback for payloads that predate it.
   const score      = rec.score_pct ?? normalizeScore(rec.score ?? 0)
 
   const handleStar = (n: number, e: React.MouseEvent) => {

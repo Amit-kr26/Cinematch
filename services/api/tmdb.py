@@ -69,12 +69,7 @@ async def _fetch_one(http, item: dict, retries: int = 3) -> dict:
 
 
 async def enrich_bounded(redis, http, items: list[dict], timeout: float = 1.5) -> None:
-    """enrich() with a hard latency ceiling for hot-path callers.
-
-    On a cold TMDB cache the fetches would otherwise run inline inside
-    /recommend; bounding them keeps the <2 ms serving story honest — worst
-    case a response ships without art and the next request finds it cached.
-    """
+    """enrich() with a latency ceiling for hot-path callers."""
     if not items:
         return
     try:

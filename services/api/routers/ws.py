@@ -14,13 +14,7 @@ logger = logging.getLogger(__name__)
 
 async def _build_payload(redis, http, user_id: int,
                          variant: str | None = None) -> str | None:
-    """Build a RecsResponse-shaped JSON string, honoring the A/B arm.
-
-    Same contract as the REST endpoint: treatment users receive the
-    Spark-personalized recs:{uid}; control users receive their static
-    als_candidates order — the experiment must hold on the WebSocket too,
-    otherwise every browser tab contaminates the control arm.
-    """
+    """Build a RecsResponse-shaped JSON string honoring the A/B arm."""
     if variant is None:
         variant = get_variant(user_id)
 
@@ -30,8 +24,6 @@ async def _build_payload(redis, http, user_id: int,
         raw = await redis.get(f"recs:{user_id}")
 
     if not raw:
-        # control always lands here; treatment lands here only on a cache miss —
-        # mirroring the REST fallback chain exactly.
         raw = await redis.get(f"als_candidates:{user_id}")
         if not raw:
             return None
@@ -77,8 +69,6 @@ async def ws_recommend(websocket: WebSocket, user_id: int):
         async for message in pubsub.listen():
             if message["type"] != "message":
                 continue
-            # Control users are not interested in re-rank notifications —
-            # their list cannot change by design.
             if variant == "control":
                 continue
             payload = await _build_payload(redis, http, user_id, variant)

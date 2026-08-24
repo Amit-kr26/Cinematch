@@ -107,12 +107,7 @@ def load_movies(data_dir: str = DATA_DIR) -> dict[int, dict]:
 
 
 def compute_all_popularity(data_dir: str = DATA_DIR) -> dict[int, float]:
-    """Exposure-damped average rating: (avg_rating × ln(count + 1)) for EVERY movie.
-
-    Not a Bayesian estimator — there is no prior and no shrinkage toward a
-    global mean; the log simply dampens raw volume. Written to movies.popularity
-    so catalogue browse ordering balances rating quality against exposure.
-    """
+    """Exposure-damped average rating (avg_rating × ln(count + 1)) per movie."""
     from collections import defaultdict
     path = os.path.join(data_dir, "ml-1m", "ratings.dat")
     counts: dict[int, int]   = defaultdict(int)
@@ -133,11 +128,7 @@ def compute_all_popularity(data_dir: str = DATA_DIR) -> dict[int, float]:
 def compute_global_popularity(data_dir: str = DATA_DIR,
                               movies: dict[int, dict] | None = None,
                               top_n: int = 100) -> list[dict]:
-    """Top-N by exposure-damped popularity (avg_rating × ln(count + 1)).
-
-    Balances rating quality against volume — avoids pure-count popularity bias.
-    See compute_all_popularity for why this is not actually "Bayesian".
-    """
+    """Top-N movies by exposure-damped popularity (avg_rating × ln(count + 1))."""
     from collections import defaultdict
     path = os.path.join(data_dir, "ml-1m", "ratings.dat")
     counts: dict[int, int]   = defaultdict(int)
@@ -276,11 +267,7 @@ def get_user_candidates(model, ratings_df, user_ids: Optional[list[int]] = None,
 
 
 def _prune_stale(r: redis_lib.Redis, prefix: str, valid_ids) -> None:
-    """Delete `prefix:{id}` keys for ids absent from the fresh artifact set.
-
-    Without this, re-training on a changed catalogue leaves orphan factors/sims
-    behind and the streaming job happily loads them (scan_iter matches all).
-    """
+    """Delete `prefix:{id}` keys absent from the freshly seeded artifact set."""
     valid = {f"{prefix}:{mid}" for mid in valid_ids}
     orphans = [k for k in r.scan_iter(f"{prefix}:*")
                if (k.decode() if isinstance(k, bytes) else k) not in valid]
@@ -405,9 +392,6 @@ def seed_postgres(conn, movies: dict[int, dict],
             [(m["movie_id"], m["title"], m["genres"], m.get("year"),
               popularity.get(m["movie_id"], 0.0)) for m in movies.values()],
         )
-        # NOTE: user_recs and als_candidates are deliberately NOT seeded here.
-        # Serving reads both from Redis; the PG als_candidates copy was dead
-        # storage (6040 × top-100 JSONB written and never read).
     conn.commit()
     print(f"Seeded PostgreSQL: {len(movies)} movies")
 

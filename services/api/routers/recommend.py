@@ -22,15 +22,8 @@ def get_variant(user_id: int, traffic_split: int = 50) -> str:
 
 
 def score_pct(score: float, layer: str) -> int:
-    """Normalize a per-layer score to a comparable 0-99 relevance badge.
-
-    Layers have incompatible raw scales (ALS predicted ratings ~0-5,
-    popularity avg·ln(n+1) up to ~40, CF dot products unbounded and often
-    negative) — the UI must not render one number with three meanings.
-      - static layers:  linear map over the documented scale, clamped
-      - CF layers:      logistic squash, so negative similarity scores land
-                        below 50 instead of *rising* under any rescaling
-    """
+    """Normalize a layer score to a 0-99 badge (linear for bounded static
+    scales, logistic for signed CF dot products)."""
     if layer in ("als_baseline",):
         pct = score / 5.0 * 99.0
     elif layer == "cold_start_popular":
@@ -72,19 +65,7 @@ async def recommend(user_id: int = Path(gt=0), redis=Depends(get_redis),
     await redis.incr(f"ab:impressions:{variant}")
     await redis.sadd(f"ab:users:{variant}", user_id)
 
-    # ── Serving layers ────────────────────────────────────────────────────────
-    # The A/B experiment gates what users receive:
-    #   treatment → Spark-personalized cache → postgres (Spark-written) → ALS
-    #               → popular
-    #   control   → NEVER anything Spark touched. Postgres `user_recs` only
-    #               ever contains Spark-written personalization, so the
-    #               control chain is strictly: als_candidates → popular.
-    # Asymmetry by design: an un-evented treatment user also sees the ALS
-    # baseline (nothing has been re-ranked yet); groups diverge only after
-    # events trigger re-ranking.
-
     async def serve_personalized() -> RecsResponse | None:
-        """Treatment layer 1: fresh Spark re-ranked recs from Redis."""
         raw = await redis.get(f"recs:{user_id}")
         if not raw:
             return None
@@ -104,7 +85,6 @@ async def recommend(user_id: int = Path(gt=0), redis=Depends(get_redis),
                             updated_at=updated_at, variant=variant)
 
     async def serve_postgres() -> RecsResponse | None:
-        """Durable layer — skipped when stale (> 30 min)."""
         if pg is None:
             return None
         async with pg.acquire() as conn:
@@ -134,7 +114,6 @@ async def recommend(user_id: int = Path(gt=0), redis=Depends(get_redis),
                             updated_at=updated_at, variant=variant)
 
     async def serve_als() -> RecsResponse | None:
-        """Static layer — bootstrap-precomputed ALS top-10, never event-touched."""
         cand_raw = await redis.get(f"als_candidates:{user_id}")
         if not cand_raw:
             return None
@@ -151,7 +130,6 @@ async def recommend(user_id: int = Path(gt=0), redis=Depends(get_redis),
                             updated_at=now, variant=variant)
 
     async def serve_popular() -> RecsResponse | None:
-        """Cold-start layer — global exposure-damped popularity ranking."""
         popular_raw = await redis.get("popular:global")
         if not popular_raw:
             return None

@@ -139,12 +139,7 @@ def create_app(lifespan_fn=None) -> FastAPI:
 
     @app.get("/stats/ab")
     async def ab_stats(request: Request):
-        """A/B experiment: control = static ALS order, treatment = personalized.
-
-        Metrics are unique-user based — impressions counted per request (HTTP
-        polling would otherwise dominate) and engagement per event both get
-        de-duplicated to users so the rates compare people, not traffic.
-        """
+        """A/B experiment metrics (unique-user engagement rates)."""
         r = request.app.state.redis
         vals = await r.mget(
             "ab:impressions:control", "ab:impressions:treatment",
