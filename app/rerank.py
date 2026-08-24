@@ -7,7 +7,8 @@ Same math as services/spark-jobs/streaming.py on the main branch:
       rating_weight: 0.4 + star/5 × 0.6   (any rating beats any view)
     pref          = Σ weight_i × item_factor[movie_i]   (unit-normalised)
     score         = dot(pref, item_factor) + α × genre_overlap
-                    × 0.7^(n − max_per_genre) for over-represented genres
+                    sign(s)·|s|·0.7^(c−2) for over-represented genres
+                    (sign-safe: CF dot products are frequently negative)
 
 Runs in-process on the driver-sized candidate pool (~3.7k movies) so no
 Spark/Kafka is needed; recommendations still react to every event.
@@ -93,14 +94,14 @@ def rerank(pref_vector: np.ndarray,
         scored.append((mid, cf_score + bonus))
     scored.sort(key=lambda x: x[1], reverse=True)
 
-    # Soft diversity penalty per primary genre, mirroring the Spark job.
     genre_counts: dict[str, int] = {}
     result: list[tuple[int, float]] = []
     for mid, score in scored:
         primary = (genres_by_movie.get(mid) or "").split("|")[0] or "Unknown"
         count = genre_counts.get(primary, 0)
         if count >= MAX_PER_GENRE:
-            score *= 0.7 ** (count - MAX_PER_GENRE + 1)
+            factor = 0.7 ** (count - MAX_PER_GENRE + 1)
+            score = score * factor if score >= 0 else score / factor
         genre_counts[primary] = count + 1
         result.append((mid, round(score, 4)))
     result.sort(key=lambda x: x[1], reverse=True)
