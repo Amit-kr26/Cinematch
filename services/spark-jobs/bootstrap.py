@@ -5,7 +5,7 @@ Redis keys written:
   item_factor:{movie_id}   → float32 numpy array as bytes (ALS item factors, rank=50)
   item_sim:{movie_id}      → JSON list of {movie_id, similarity} top-20 neighbours
   als_candidates:{user_id} → JSON list of {movie_id, title, genres, als_score, score} top-100
-  popular:global           → JSON list of top-100 movies by Bayesian popularity score
+  popular:global           → JSON list of top-100 movies by exposure-damped popularity
   eval:als_metrics         → JSON dict with NDCG@10, Precision@10, n_users_evaluated
 
 PostgreSQL tables written:
@@ -107,10 +107,11 @@ def load_movies(data_dir: str = DATA_DIR) -> dict[int, dict]:
 
 
 def compute_all_popularity(data_dir: str = DATA_DIR) -> dict[int, float]:
-    """Bayesian-weighted popularity (avg_rating × log(count + 1)) for EVERY movie.
+    """Exposure-damped average rating: (avg_rating × ln(count + 1)) for EVERY movie.
 
-    Written to the movies.popularity column so the API can order catalogue browse
-    results by popularity. Mirrors compute_global_popularity's formula.
+    Not a Bayesian estimator — there is no prior and no shrinkage toward a
+    global mean; the log simply dampens raw volume. Written to movies.popularity
+    so catalogue browse ordering balances rating quality against exposure.
     """
     from collections import defaultdict
     path = os.path.join(data_dir, "ml-1m", "ratings.dat")
@@ -132,9 +133,10 @@ def compute_all_popularity(data_dir: str = DATA_DIR) -> dict[int, float]:
 def compute_global_popularity(data_dir: str = DATA_DIR,
                               movies: dict[int, dict] | None = None,
                               top_n: int = 100) -> list[dict]:
-    """
-    Bayesian-weighted popularity: score = avg_rating × log(count + 1).
+    """Top-N by exposure-damped popularity (avg_rating × ln(count + 1)).
+
     Balances rating quality against volume — avoids pure-count popularity bias.
+    See compute_all_popularity for why this is not actually "Bayesian".
     """
     from collections import defaultdict
     path = os.path.join(data_dir, "ml-1m", "ratings.dat")
@@ -273,10 +275,26 @@ def get_user_candidates(model, ratings_df, user_ids: Optional[list[int]] = None,
     return result
 
 
+def _prune_stale(r: redis_lib.Redis, prefix: str, valid_ids) -> None:
+    """Delete `prefix:{id}` keys for ids absent from the fresh artifact set.
+
+    Without this, re-training on a changed catalogue leaves orphan factors/sims
+    behind and the streaming job happily loads them (scan_iter matches all).
+    """
+    valid = {f"{prefix}:{mid}" for mid in valid_ids}
+    orphans = [k for k in r.scan_iter(f"{prefix}:*")
+               if (k.decode() if isinstance(k, bytes) else k) not in valid]
+    if orphans:
+        r.delete(*orphans)
+        print(f"Pruned {len(orphans)} stale {prefix}:* keys from a previous model")
+
+
 def seed_redis(r: redis_lib.Redis, item_factors: dict[int, np.ndarray],
                item_sim: dict[int, list[dict]],
                user_candidates: dict[int, list[dict]],
                movies: dict[int, dict]) -> None:
+    _prune_stale(r, "item_factor", item_factors.keys())
+    _prune_stale(r, "item_sim", item_sim.keys())
     pipe = r.pipeline(transaction=False)
     for movie_id, factor in item_factors.items():
         pipe.set(f"item_factor:{movie_id}", factor.tobytes())
@@ -371,7 +389,6 @@ def seed_model_run(conn, eval_metrics: dict, rank: int = 50,
 
 
 def seed_postgres(conn, movies: dict[int, dict],
-                  user_candidates: dict[int, list[dict]],
                   popularity: dict[int, float] | None = None) -> None:
     popularity = popularity or {}
     with conn.cursor() as cur:
@@ -388,13 +405,11 @@ def seed_postgres(conn, movies: dict[int, dict],
             [(m["movie_id"], m["title"], m["genres"], m.get("year"),
               popularity.get(m["movie_id"], 0.0)) for m in movies.values()],
         )
-        cur.executemany(
-            "INSERT INTO als_candidates (user_id, candidates) VALUES (%s, %s) "
-            "ON CONFLICT (user_id) DO UPDATE SET candidates = EXCLUDED.candidates",
-            [(uid, json.dumps(cands)) for uid, cands in user_candidates.items()],
-        )
+        # NOTE: user_recs and als_candidates are deliberately NOT seeded here.
+        # Serving reads both from Redis; the PG als_candidates copy was dead
+        # storage (6040 × top-100 JSONB written and never read).
     conn.commit()
-    print(f"Seeded PostgreSQL: {len(movies)} movies, {len(user_candidates)} user candidates")
+    print(f"Seeded PostgreSQL: {len(movies)} movies")
 
 
 def write_data_metadata(data_dir: str, ratings_path: str, n_ratings: int,
@@ -493,7 +508,7 @@ def main() -> None:
     ensure_schema(conn)
     print("Computing full-catalogue popularity for browse ordering …")
     all_popularity = compute_all_popularity()
-    seed_postgres(conn, movies, user_candidates, all_popularity)
+    seed_postgres(conn, movies, all_popularity)
     seed_model_run(conn, eval_metrics, rank=rank, max_iter=max_iter,
                    reg_param=reg_param, seed=seed)
     conn.close()

@@ -214,6 +214,28 @@ def test_genre_diversity_soft_penalty():
     assert len(ranked) == 10, "Soft penalty should not hard-exclude items"
 
 
+def test_genre_diversity_penalty_is_sign_safe():
+    """Multiplying a NEGATIVE CF score by 0.7 shrinks its magnitude toward
+    zero, i.e. RAISES it up the ranking. The penalty must scale |score| and
+    keep the sign so over-represented genres are pushed down either way."""
+    from streaming import rerank_candidates
+
+    # Zero pref vector + no factors -> fallback path keeps candidate scores as-is.
+    # Two same-genre candidates with negative scores; second is penalized.
+    candidates = [
+        {"movie_id": 1, "title": "A", "genres": "Action", "als_score": -1.0},
+        {"movie_id": 2, "title": "B", "genres": "Action", "als_score": -1.0},
+    ]
+    ranked = rerank_candidates(np.zeros(4, dtype=np.float32), candidates, {},
+                               max_per_genre=1, top_n=2)
+    first, second = ranked[0]["score"], ranked[1]["score"]
+    assert first < 0 and second < 0, "scores must stay negative"
+    assert second < first, (
+        "penalized negative score must move FURTHER down (more negative), "
+        f"got first={first}, second={second}"
+    )
+
+
 def test_genre_hybrid_boosts_preferred_genre():
     """User genre prefs should boost candidates matching preferred genres."""
     from streaming import compute_genre_preferences, rerank_candidates

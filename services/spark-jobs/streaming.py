@@ -21,6 +21,7 @@ import math
 import os
 import random
 import time
+from datetime import datetime, timezone
 
 import numpy as np
 import psycopg2
@@ -169,14 +170,20 @@ def rerank_candidates(pref_vector: np.ndarray, candidates: list[dict],
     scored.sort(key=lambda x: x["score"], reverse=True)
 
     # Soft diversity: exponential score penalty for over-represented primary genres.
-    # score *= 0.7^max(0, count - max_per_genre) — avoids hard removal of preferred genres.
+    # Sign-safe: CF dot products against a unit pref vector are frequently
+    # negative, and multiplying a negative score by 0.7 would *raise* it.
+    # Scaling |score| preserves ordering intent for both signs.
+    # Applies from the 4th title of a genre onward (4th ×0.7, 5th ×0.49 …).
     genre_counts: dict[str, int] = {}
     result = []
     for item in scored:
         primary = (item.get("genres") or "").split("|")[0] or "Unknown"
         count = genre_counts.get(primary, 0)
         if count >= max_per_genre:
-            item = {**item, "score": item["score"] * (0.7 ** (count - max_per_genre + 1))}
+            factor = 0.7 ** (count - max_per_genre + 1)
+            raw = item["score"]
+            penalized = math.copysign(abs(raw) * factor, raw)
+            item = {**item, "score": penalized}
         genre_counts[primary] = count + 1
         result.append(item)
 
@@ -274,10 +281,20 @@ def process_batch(batch_df, batch_id: int, r: redis_lib.Redis,
         pipe.get(f"als_candidates:{uid}")
     prefetched_cands = dict(zip(user_ids, pipe.execute()))
 
+    # NOTE on integrity: only the PostgreSQL writes are transactional, and
+    # each user commits independently. Redis state/recs/publish are NOT
+    # rolled back on failure — accepted because serving reads Redis and
+    # every write is idempotent.
+    written = 0
+    ttl = 300 + random.randint(-30, 30)   # jitter avoids synchronized expiry
+    ts_iso = datetime.now(timezone.utc).isoformat()
+
+    cur = pg_conn.cursor()
     try:
-        with pg_conn.cursor() as cur:
-            for user_id, new_events in events_by_user.items():
-                # Filter out late-arriving events (> 300s old)
+        for user_id, new_events in events_by_user.items():
+            # Per-user isolation: one bad user (corrupt state, Redis hiccup,
+            # bad JSON) must not abort the rest of the micro-batch.
+            try:
                 new_events = [e for e in new_events if now_ts - e["ts"] <= 300]
                 if not new_events:
                     continue
@@ -295,7 +312,11 @@ def process_batch(batch_df, batch_id: int, r: redis_lib.Redis,
                     continue
                 candidates = json.loads(cand_bytes)
 
-                # Item-sim candidate expansion
+                # Item-sim candidate expansion. Cosine similarity ∈ [-1,1] is
+                # NOT comparable to ALS predicted ratings (~1-5): it is stored
+                # under `similarity`, deliberately OUT of `als_score`, so the
+                # factor-missing fallback scores these at 0 instead of mixing
+                # incomparable scales.
                 recent_ids = list(dict.fromkeys(
                     e["movie_id"] for e in reversed(merged)
                 ))[:5]
@@ -307,11 +328,11 @@ def process_batch(batch_df, batch_id: int, r: redis_lib.Redis,
                         if sim_id not in candidate_ids and sim_id in all_movie_meta:
                             meta = all_movie_meta[sim_id]
                             extra.append({
-                                "movie_id":  sim_id,
-                                "title":     meta["title"],
-                                "genres":    meta["genres"],
-                                "als_score": sim_entry["similarity"],
-                                "score":     sim_entry["similarity"],
+                                "movie_id":   sim_id,
+                                "title":      meta["title"],
+                                "genres":     meta["genres"],
+                                "similarity": sim_entry["similarity"],
+                                "expanded":   True,
                             })
                             candidate_ids.add(sim_id)
                     if len(extra) >= SIM_EXPANSION_MAX:
@@ -323,7 +344,10 @@ def process_batch(batch_df, batch_id: int, r: redis_lib.Redis,
                 top10 = rerank_candidates(pref, candidates, all_item_factors,
                                           user_genre_prefs=genre_prefs, top_n=10)
 
-                r.set(f"recs:{user_id}", json.dumps(top10), ex=300 + random.randint(-30, 30))
+                r.set(f"recs:{user_id}", json.dumps(top10), ex=ttl)
+                # Freshness timestamp consumed by /recommend — without it the
+                # UI would always show "Updated just now".
+                r.set(f"recs:{user_id}:ts", ts_iso, ex=ttl)
                 r.publish(f"recs_update:{user_id}", "1")
 
                 cur.execute(
@@ -332,13 +356,17 @@ def process_batch(batch_df, batch_id: int, r: redis_lib.Redis,
                     "SET recs = EXCLUDED.recs, updated_at = NOW()",
                     (user_id, json.dumps(top10)),
                 )
+                pg_conn.commit()
                 written += 1
-
-        pg_conn.commit()
-    except Exception as e:
-        print(f"Batch {batch_id}: DB error — {e}")
+            except Exception as ue:
+                print(f"Batch {batch_id}: user {user_id} failed — {ue}")
+                try:
+                    pg_conn.rollback()
+                except Exception:
+                    pass
+    finally:
         try:
-            pg_conn.rollback()
+            cur.close()
         except Exception:
             pass
     print(f"Batch {batch_id}: processed {len(events_by_user)} users, "
@@ -346,10 +374,13 @@ def process_batch(batch_df, batch_id: int, r: redis_lib.Redis,
 
 
 def ensure_topic(bootstrap_servers: str, topic: str, num_partitions: int = 3) -> None:
-    """Create Kafka topic and wait until all partitions have assigned leaders.
+    """Create the Kafka topic and wait until its metadata becomes visible.
 
     Without this wait, Spark's KafkaMicroBatchStream raises
-    UnknownTopicOrPartitionException during initial offset fetch.
+    UnknownTopicOrPartitionException during initial offset fetch. Note: the
+    readiness check confirms partitions EXIST — it does not verify that every
+    partition has an elected leader (metadata propagation usually wins that
+    race; a leaderless partition would still fail the first offset fetch).
     """
     from kafka import KafkaConsumer
 
