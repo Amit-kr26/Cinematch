@@ -131,7 +131,7 @@ score   = dot(pref, item_factor) + 0.15 × genre_overlap
 | Priority | Source | Latency |
 |----------|--------|---------|
 | 1 | Redis `recs:{uid}` — Spark re-ranked, TTL ~5 min | < 2 ms |
-| 2 | Postgres `user_recs` — durable, skipped if > 30 min stale | 5–15 ms |
+| 2 | Postgres `user_recs` — durable, **treatment only** (Spark-written), skipped if > 30 min stale | 5–15 ms |
 | 3 | Redis `als_candidates:{uid}` — ALS baseline, permanent | < 2 ms |
 | 4 | Redis `popular:global` — exposure-damped top-100, cold-start | < 2 ms |
 
@@ -184,13 +184,3 @@ docker exec redis redis-cli LLEN dlq:recent
 make logs   # follow spark + api + simulator logs
 make test   # run pytest (37 tests)
 ```
-
----
-
-## Demo deployment notes
-
-This stack targets local demonstration: Postgres/Redis/Kafka ports are
-published to the host with default demo credentials (`recsys:recsys`,
-no auth on Redis), and Grafana allows anonymous viewer access. Do not run it
-on an untrusted network without changing `.env`, removing the port
-publishings, and disabling anonymous Grafana auth.
