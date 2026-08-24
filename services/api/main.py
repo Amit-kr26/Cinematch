@@ -12,14 +12,8 @@ import redis.asyncio as aioredis
 import tmdb
 from fastapi import FastAPI, Request, Response
 from kafka import KafkaProducer as SyncKafkaProducer
-from prometheus_client import (
-    CONTENT_TYPE_LATEST,
-    REGISTRY,
-    Counter,
-    Gauge,
-    Histogram,
-    generate_latest,
-)
+from metrics import DLQ_GAUGE, MODEL_NDCG_GAUGE, REQUEST_LATENCY
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from routers import events, health, movies, recommend, simulate, ws
 
 logging.basicConfig(level=logging.INFO,
@@ -28,32 +22,6 @@ logging.basicConfig(level=logging.INFO,
 REDIS_URL     = os.getenv("REDIS_URL", "redis://redis:6379")
 POSTGRES_URL  = os.getenv("POSTGRES_URL", "postgresql://recsys:recsys@postgres:5432/recsys")
 KAFKA_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-
-
-def _get_or_create(cls, name: str, doc: str, *args, fallback_suffix: str = "", **kwargs):
-    try:
-        return cls(name, doc, *args, **kwargs)
-    except ValueError:
-        key = f"{name}{fallback_suffix}" if fallback_suffix else name
-        return REGISTRY._names_to_collectors.get(key) or REGISTRY._names_to_collectors.get(name)
-
-
-REQUEST_LATENCY = _get_or_create(
-    Histogram, "api_latency_ms", "API request latency in milliseconds",
-    ["method", "endpoint"],
-    fallback_suffix="_bucket",
-    buckets=[1, 5, 10, 25, 50, 100, 250, 500, 1000],
-)
-CACHE_HIT_COUNTER = _get_or_create(
-    Counter, "cache_hit_total", "Redis cache hits", ["result"],
-    fallback_suffix="_total",
-)
-DLQ_GAUGE = _get_or_create(
-    Gauge, "recsys_dlq_events_total", "Total invalid events in dead-letter queue",
-)
-MODEL_NDCG_GAUGE = _get_or_create(
-    Gauge, "recsys_model_ndcg_at_10", "ALS model NDCG@10 from last bootstrap run",
-)
 
 
 async def _prewarm_tmdb(app: FastAPI) -> None:
@@ -171,26 +139,39 @@ def create_app(lifespan_fn=None) -> FastAPI:
 
     @app.get("/stats/ab")
     async def ab_stats(request: Request):
-        """A/B experiment: control = ALS baseline order, treatment = personalized hybrid."""
+        """A/B experiment: control = static ALS order, treatment = personalized.
+
+        Metrics are unique-user based — impressions counted per request (HTTP
+        polling would otherwise dominate) and engagement per event both get
+        de-duplicated to users so the rates compare people, not traffic.
+        """
         r = request.app.state.redis
         vals = await r.mget(
             "ab:impressions:control", "ab:impressions:treatment",
             "ab:engagements:control",  "ab:engagements:treatment",
         )
         a_imp, b_imp, a_eng, b_eng = [int(v or 0) for v in vals]
+        a_users = await r.scard("ab:users:control")
+        b_users = await r.scard("ab:users:treatment")
+        a_engaged = await r.scard("ab:engaged_users:control")
+        b_engaged = await r.scard("ab:engaged_users:treatment")
+
+        def arm(users, engaged, imp, eng):
+            return {
+                "users":          users,
+                "engaged_users":  engaged,
+                "engagement_rate": round(engaged / users, 4) if users else 0.0,
+                "impressions":    imp,
+                "engagements":    eng,
+            }
+
         return {
             "config": {
-                "control":   "ALS baseline order (no event-driven personalization)",
+                "control":   "Static ALS bootstrap order (never Spark-personalized)",
                 "treatment": "Personalized (Spark time-decay + hybrid CF+genre)",
             },
-            "control": {
-                "impressions": a_imp, "engagements": a_eng,
-                "engagement_rate": round(a_eng / a_imp, 4) if a_imp else 0.0,
-            },
-            "treatment": {
-                "impressions": b_imp, "engagements": b_eng,
-                "engagement_rate": round(b_eng / b_imp, 4) if b_imp else 0.0,
-            },
+            "control":   arm(a_users, a_engaged, a_imp, a_eng),
+            "treatment": arm(b_users, b_engaged, b_imp, b_eng),
         }
 
     @app.get("/stats/model-history")

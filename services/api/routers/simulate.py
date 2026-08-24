@@ -18,12 +18,16 @@ RATE_WINDOW  = 1    # seconds
 
 
 async def _check_rate_limit(redis, user_id: int) -> bool:
-    """Return True if request is within rate limit, False if exceeded."""
+    """Fixed 1 s window per user.
+
+    The expiry is set only on the first increment of a window — re-arming
+    EXPIRE on every hit would let a steady 1 rps user keep the key alive
+    forever and exceed the sustained limit.
+    """
     key = f"ratelimit:simulate:{user_id}"
-    pipe = redis.pipeline()
-    pipe.incr(key)
-    pipe.expire(key, RATE_WINDOW)
-    count, _ = await pipe.execute()
+    count = await redis.incr(key)
+    if count == 1:
+        await redis.expire(key, RATE_WINDOW)
     return count <= RATE_LIMIT
 
 
@@ -68,6 +72,8 @@ async def simulate(req: SimulateRequest, request: Request):
 
     variant = get_variant(req.user_id)
     await redis.incr(f"ab:engagements:{variant}")
+    # unique-user engagement — the honest denominator for /stats/ab rates
+    await redis.sadd(f"ab:engaged_users:{variant}", req.user_id)
 
     logger.info("Simulated event user_id=%d movie_id=%d type=%s",
                 req.user_id, req.movie_id, req.event_type)

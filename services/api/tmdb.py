@@ -68,6 +68,21 @@ async def _fetch_one(http, item: dict, retries: int = 3) -> dict:
     return dict(EMPTY)
 
 
+async def enrich_bounded(redis, http, items: list[dict], timeout: float = 1.5) -> None:
+    """enrich() with a hard latency ceiling for hot-path callers.
+
+    On a cold TMDB cache the fetches would otherwise run inline inside
+    /recommend; bounding them keeps the <2 ms serving story honest — worst
+    case a response ships without art and the next request finds it cached.
+    """
+    if not items:
+        return
+    try:
+        await asyncio.wait_for(enrich(redis, http, items), timeout=timeout)
+    except asyncio.TimeoutError:
+        pass
+
+
 async def enrich(redis, http, items: list[dict]) -> list[dict]:
     """Mutates `items` in place, attaching TMDB fields. Returns the same list."""
     if not items:
