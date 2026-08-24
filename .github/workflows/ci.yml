@@ -36,5 +36,7 @@ jobs:
         run: npm run lint
       - name: TypeScript check
         run: npx tsc --noEmit
+      - name: Production build (what the image ships)
+        run: npm run build
       - name: Run tests
         run: npm test

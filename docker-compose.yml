@@ -29,7 +29,7 @@ services:
   mlflow:
     image: python:3.12-slim
     command: >
-      bash -c "pip install mlflow>=2.13 --quiet --no-cache-dir &&
+      bash -c "pip install \"mlflow>=2.13\" --quiet --no-cache-dir &&
       mlflow server --backend-store-uri file:///mlruns --default-artifact-root file:///mlruns --host 0.0.0.0 --port 5000"
     ports:
       - "5000:5000"
@@ -79,10 +79,10 @@ services:
   api:
     build: ./services/api
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     environment:
       REDIS_URL: "redis://redis:6379"
-      POSTGRES_URL: "postgresql://recsys:recsys@postgres:5432/recsys"
+      POSTGRES_URL: "postgresql://${POSTGRES_USER:-recsys}:${POSTGRES_PASSWORD:-recsys}@postgres:5432/${POSTGRES_DB:-recsys}"
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       TMDB_API_KEY: "${TMDB_API_KEY:-}"
     depends_on:

@@ -108,7 +108,7 @@ make demo        # open http://localhost:3000
 ## How It Works
 
 **Bootstrap (one-time, ~5 min):**
-Downloads MovieLens 1M → trains ALS (rank=50, regParam=0.1) → leave-one-out offline eval → writes item factors, top-100 ALS candidates, cosine-similar neighbors, and Bayesian popularity into Redis → logs NDCG@10 + Precision@10 to MLflow and `model_runs` table.
+Downloads MovieLens 1M → trains ALS (rank=50, regParam=0.1) → leave-one-out offline eval → writes item factors, top-100 ALS candidates, cosine-similar neighbors, and exposure-damped popularity into Redis → logs NDCG@10 + Precision@10 to MLflow and `model_runs` table.
 
 **Streaming pipeline (every 10 s):**
 Spark reads Kafka micro-batch → validates events (invalid → DLQ) → builds per-user preference vector → re-ranks ALS top-100 with CF score + genre bonus → writes top-10 to Redis + Postgres → publishes via pub/sub → FastAPI WebSocket pushes to browser.
@@ -116,12 +116,14 @@ Spark reads Kafka micro-batch → validates events (invalid → DLQ) → builds 
 **Scoring:**
 ```
 weight        = exp(−0.001 × age_s) × type_weight × rating_weight
-  type_weight:  click=1.0  view=1.5  rating=3.0
+  type_weight:  click=1.0  view=1.5  like=2.5  rating=3.0
+                (like is emitted by the UI, not the classic simulator)
   rating_weight = 0.4 + star/5 × 0.6   (1★→0.52, 5★→1.0; any rating beats any view)
 
 pref    = Σ weight_i × item_factor[movie_id_i]   (L2-normalized unit vector)
 score   = dot(pref, item_factor) + 0.15 × genre_overlap
-          diversity penalty: × 0.7^(n − 2)  for each movie where n ≥ 3 of same primary genre
+          diversity penalty: from the 4th title of a primary genre,
+          score → sign(score) · |score| · 0.7^(c−2), c = earlier same-genre titles
 ```
 
 **4-layer fallback — no blank page:**
@@ -131,7 +133,7 @@ score   = dot(pref, item_factor) + 0.15 × genre_overlap
 | 1 | Redis `recs:{uid}` — Spark re-ranked, TTL ~5 min | < 2 ms |
 | 2 | Postgres `user_recs` — durable, skipped if > 30 min stale | 5–15 ms |
 | 3 | Redis `als_candidates:{uid}` — ALS baseline, permanent | < 2 ms |
-| 4 | Redis `popular:global` — Bayesian top-100, cold-start | < 2 ms |
+| 4 | Redis `popular:global` — exposure-damped top-100, cold-start | < 2 ms |
 
 ---
 
@@ -146,7 +148,7 @@ score   = dot(pref, item_factor) + 0.15 × genre_overlap
 | Metric | Type | Description |
 |--------|------|-------------|
 | `api_latency_ms` | Histogram | Request latency by endpoint |
-| `cache_hit_total` | Counter | Redis hit / miss |
+| `cache_hit_total` | Counter | Redis hit / miss — incremented by the API on every serve path (result=true only for the hot personalized cache) |
 | `recsys_dlq_events_total` | Gauge | Invalid events in dead-letter queue |
 | `recsys_model_ndcg_at_10` | Gauge | NDCG@10 from last bootstrap |
 
@@ -180,5 +182,15 @@ docker exec redis redis-cli GET model:version
 docker exec redis redis-cli LLEN dlq:recent
 
 make logs   # follow spark + api + simulator logs
-make test   # run pytest (31 tests)
+make test   # run pytest (37 tests)
 ```
+
+---
+
+## Demo deployment notes
+
+This stack targets local demonstration: Postgres/Redis/Kafka ports are
+published to the host with default demo credentials (`recsys:recsys`,
+no auth on Redis), and Grafana allows anonymous viewer access. Do not run it
+on an untrusted network without changing `.env`, removing the port
+publishings, and disabling anonymous Grafana auth.

@@ -1,7 +1,9 @@
 {
   "__inputs": [],
   "__requires": [],
-  "annotations": {"list": []},
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -10,7 +12,12 @@
   "panels": [
     {
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
       "title": "API Latency",
       "type": "row"
@@ -18,12 +25,27 @@
     {
       "datasource": "Prometheus",
       "fieldConfig": {
-        "defaults": {"unit": "ms"},
+        "defaults": {
+          "unit": "ms"
+        },
         "overrides": []
       },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
       "id": 2,
-      "options": {"legend": {"calcs": ["mean","max"], "displayMode": "table"}},
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table"
+        }
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.50, sum(rate(api_latency_ms_bucket[1m])) by (le, endpoint))",
@@ -43,7 +65,12 @@
     },
     {
       "datasource": "Prometheus",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 1},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
       "id": 3,
       "targets": [
         {
@@ -53,13 +80,54 @@
       ],
       "title": "Redis Cache Hit Ratio",
       "type": "timeseries"
+    },
+    {
+      "id": null,
+      "title": "Dead-letter queue events",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "recsys_dlq_events_total",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 9
+      }
+    },
+    {
+      "id": null,
+      "title": "Model NDCG@10",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "recsys_model_ndcg_at_10",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 9
+      }
     }
   ],
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": ["recsys"],
-  "templating": {"list": []},
-  "time": {"from": "now-15m", "to": "now"},
+  "tags": [
+    "recsys"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
   "title": "Movie RecSys",
   "uid": "recsys-dashboard",
   "version": 1

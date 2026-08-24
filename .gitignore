@@ -22,7 +22,6 @@ credentials.json
 !.gitignore
 !.github/
 !.gitattributes
-!.gitconfig
 !.env.example
 !.python-version
 !.gitattributes
