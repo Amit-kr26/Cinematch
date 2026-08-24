@@ -177,8 +177,10 @@ def rerank_candidates(pref_vector: np.ndarray, candidates: list[dict],
         if count >= max_per_genre:
             factor = 0.7 ** (count - max_per_genre + 1)
             raw = item["score"]
-            penalized = math.copysign(abs(raw) * factor, raw)
-            item = {**item, "score": penalized}
+            # Positives shrink toward zero; negatives DIVIDE so they sink
+            # further down (multiplying a negative would raise it).
+            adjusted = raw * factor if raw >= 0 else raw / factor
+            item = {**item, "score": adjusted}
         genre_counts[primary] = count + 1
         result.append(item)
 

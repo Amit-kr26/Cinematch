@@ -228,11 +228,10 @@ def test_genre_diversity_penalty_is_sign_safe():
     ]
     ranked = rerank_candidates(np.zeros(4, dtype=np.float32), candidates, {},
                                max_per_genre=1, top_n=2)
-    first, second = ranked[0]["score"], ranked[1]["score"]
-    assert first < 0 and second < 0, "scores must stay negative"
-    assert second < first, (
-        "penalized negative score must move FURTHER down (more negative), "
-        f"got first={first}, second={second}"
+    by_id = {r["movie_id"]: r["score"] for r in ranked}
+    assert by_id[1] == -1.0, "first occurrence unpenalized"
+    assert by_id[2] < by_id[1], (
+        f"penalized negative must sink FURTHER down (more negative), got {by_id}"
     )
 
 
