@@ -3,6 +3,7 @@ export interface Rec {
   title:    string
   genres:   string
   score?:   number
+  score_pct?: number | null
   // TMDB enrichment (optional)
   poster?:      string | null
   backdrop?:    string | null

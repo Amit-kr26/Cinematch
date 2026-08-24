@@ -10,29 +10,50 @@ export function useRecommendations(userId: number | null, pollMs = 5000) {
   const wsRef = useRef<WebSocket | null>(null)
   const lastPushAt = useRef(0)
 
-  // WebSocket path — receives push updates when Spark writes new recs
+  // WebSocket path — receives push updates when Spark writes new recs.
+  // Auto-reconnects with capped backoff; without this, any drop (API restart,
+  // proxy timeout) silently downgraded the session to polling forever.
   useEffect(() => {
     if (!userId) return
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${window.location.host}/ws/recommend/${userId}`)
-    wsRef.current = ws
-    ws.onopen    = () => setWsConn(true)
-    ws.onclose   = () => setWsConn(false)
-    ws.onerror   = () => setWsConn(false)
-    ws.onmessage = (e) => {
-      try {
-        lastPushAt.current = Date.now()
-        const parsed = JSON.parse(e.data)
-        // Streaming job may push a bare recs array; wrap it into the response envelope.
-        const next: RecsResponse = Array.isArray(parsed)
-          ? { user_id: userId, recs: parsed, source: 'redis',
-              updated_at: new Date().toISOString(), variant: 'control' }
-          : parsed
-        setData(next)
-        setError(null)
-      } catch { /* ignore parse errors */ }
+    let closed = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let attempts = 0
+
+    const connect = () => {
+      if (closed) return
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+      const ws = new WebSocket(`${proto}://${window.location.host}/ws/recommend/${userId}`)
+      wsRef.current = ws
+      ws.onopen = () => { attempts = 0; setWsConn(true) }
+      ws.onclose = () => {
+        setWsConn(false)
+        if (closed) return
+        attempts += 1
+        retryTimer = setTimeout(connect, Math.min(30_000, 1000 * 2 ** attempts))
+      }
+      ws.onerror   = () => setWsConn(false)
+      ws.onmessage = (e) => {
+        try {
+          lastPushAt.current = Date.now()
+          const parsed = JSON.parse(e.data)
+          // Streaming job may push a bare recs array; wrap it into the response envelope.
+          const next: RecsResponse = Array.isArray(parsed)
+            ? { user_id: userId, recs: parsed, source: 'redis',
+                updated_at: new Date().toISOString(), variant: 'control' }
+            : parsed
+          setData(next)
+          setError(null)
+        } catch { /* ignore parse errors */ }
+      }
     }
-    return () => { ws.close(); setWsConn(false) }
+    connect()
+
+    return () => {
+      closed = true
+      if (retryTimer) clearTimeout(retryTimer)
+      wsRef.current?.close()
+      setWsConn(false)
+    }
   }, [userId])
 
   // HTTP polling fallback — only active when WebSocket is not connected

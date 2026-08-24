@@ -49,7 +49,7 @@ export function StatusBar({ source, stats, variant, wsConnected, mode }: Props) 
         )}
         {stats && stats.p50_latency_ms > 0 && (
           <span className="px-3.5 py-1.5 rounded-full text-sm font-medium border text-blue-400 bg-blue-900/20 border-blue-700/30 transition-all duration-500">
-            {stats.p50_latency_ms.toFixed(1)}ms p50
+            {stats.p50_latency_ms.toFixed(1)} ms latency
           </span>
         )}
         {stats && (
