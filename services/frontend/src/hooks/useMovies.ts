@@ -9,10 +9,12 @@ export function useMovies(search: string, genre: string, pageSize = 20) {
   const [total, setTotal]             = useState(0)
   const [loading, setLoading]         = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [error, setError]             = useState<string | null>(null)
 
   const fetchPage = useCallback(async (p: number, replace: boolean) => {
     if (replace) setLoading(true)
     else setLoadingMore(true)
+    if (replace) setError(null)
     try {
       const r = await axios.get<MoviesResponse>('/movies', {
         params: {
@@ -26,6 +28,8 @@ export function useMovies(search: string, genre: string, pageSize = 20) {
       setHasMore(r.data.has_more)
       setTotal(r.data.total)
       setPage(p)
+    } catch (e) {
+      if (replace) setError(e instanceof Error ? e.message : 'Failed to load movies')
     } finally {
       setLoading(false)
       setLoadingMore(false)
@@ -38,5 +42,7 @@ export function useMovies(search: string, genre: string, pageSize = 20) {
     if (hasMore && !loadingMore) fetchPage(page + 1, false)
   }, [hasMore, loadingMore, page, fetchPage])
 
-  return { movies, total, hasMore, loading, loadingMore, loadMore }
+  const retry = useCallback(() => fetchPage(1, true), [fetchPage])
+
+  return { movies, total, hasMore, loading, loadingMore, loadMore, error, retry }
 }

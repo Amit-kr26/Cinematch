@@ -6,7 +6,8 @@ interface Props {
   data:        RecsResponse | null
   loading:     boolean
   error:       string | null
-  onFireEvent: (rec: Rec, eventType: EventType, rating?: number) => void
+  onRetry?:    () => void
+  onFireEvent: (rec: Rec, eventType: EventType, rating?: number) => Promise<void> | void
   onCardClick: (rec: Rec) => void
 }
 
@@ -21,7 +22,7 @@ function formatUpdatedAgo(updatedAt: string): string {
   return `Updated ${Math.floor(diffSec / 3600)}h ago`
 }
 
-export function RecommendationList({ data, loading, error, onFireEvent, onCardClick }: Props) {
+export function RecommendationList({ data, loading, error, onRetry, onFireEvent, onCardClick }: Props) {
   const [, setTick] = useState(0)
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 30_000)
@@ -30,8 +31,14 @@ export function RecommendationList({ data, loading, error, onFireEvent, onCardCl
 
   if (error) {
     return (
-      <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-5">
+      <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-5 flex items-center justify-between gap-4">
         <p className="text-red-400 text-base font-medium">Error: {error}</p>
+        {onRetry && (
+          <button onClick={onRetry}
+            className="px-4 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 text-sm font-medium border border-red-500/30 shrink-0">
+            Retry
+          </button>
+        )}
       </div>
     )
   }
@@ -107,7 +114,7 @@ export function RecommendationList({ data, loading, error, onFireEvent, onCardCl
             key={rec.movie_id}
             rec={rec}
             index={i}
-            onFireEvent={(type, rating) => { Promise.resolve(onFireEvent(rec, type, rating)).catch(() => {}) }}
+            onFireEvent={(type, rating) => onFireEvent(rec, type, rating)}
             onCardClick={() => onCardClick(rec)}
           />
         ))}

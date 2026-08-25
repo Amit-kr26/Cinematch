@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import tmdb
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from routers.recommend import get_variant
+from routers.recommend import get_variant, score_pct
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -30,7 +30,8 @@ async def _build_payload(redis, http, user_id: int,
         source = "als_baseline"
         candidates = json.loads(raw)
         recs = [{"movie_id": c["movie_id"], "title": c.get("title", ""),
-                 "genres": c.get("genres", ""), "score": c.get("als_score", 0.0)}
+                 "genres": c.get("genres", ""), "score": c.get("als_score", 0.0),
+                 "score_pct": score_pct(c.get("als_score", 0.0), "als_baseline")}
                 for c in candidates[:10]]
     else:
         try:
@@ -39,8 +40,10 @@ async def _build_payload(redis, http, user_id: int,
             logger.warning("Corrupt recs in Redis for user_id=%d, skipping send",
                            user_id)
             return None
+        for r in recs:
+            r["score_pct"] = score_pct(r.get("score", 0.0), "redis")
 
-    await tmdb.enrich(redis, http, recs)
+    await tmdb.enrich_bounded(redis, http, recs)
     return json.dumps({
         "user_id":    user_id,
         "recs":       recs,

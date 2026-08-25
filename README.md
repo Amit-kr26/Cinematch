@@ -124,7 +124,7 @@ weight        = exp(−0.001 × age_s) × type_weight × rating_weight
 pref    = Σ weight_i × item_factor[movie_id_i]   (L2-normalized unit vector)
 score   = dot(pref, item_factor) + 0.15 × genre_overlap
           diversity penalty: from the 4th title of a primary genre,
-          score → sign(score) · |score| · 0.7^(c−2), c = earlier same-genre titles
+          positives: s × 0.7^(c−2) / negatives: s ÷ 0.7^(c−2), c = earlier same-genre titles
 ```
 
 **4-layer fallback — no blank page:**
@@ -183,5 +183,5 @@ docker exec redis redis-cli GET model:version
 docker exec redis redis-cli LLEN dlq:recent
 
 make logs   # follow spark + api + simulator logs
-make test   # run pytest (37 tests)
+make test   # run pytest (39 tests: 38 passed + 1 skipped without dataset)
 ```

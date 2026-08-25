@@ -98,9 +98,15 @@ def compute_genre_preferences(events: list[dict],
 
 def _validate_event(user_id, movie_id, event_type) -> tuple[bool, str | None]:
     """Return (True, None) for valid events; (False, reason) for invalid."""
-    if not user_id or int(user_id) <= 0:
+    try:
+        if not user_id or int(user_id) <= 0:
+            return False, "invalid_user_id"
+    except (ValueError, TypeError):
         return False, "invalid_user_id"
-    if not movie_id or int(movie_id) <= 0:
+    try:
+        if not movie_id or int(movie_id) <= 0:
+            return False, "invalid_movie_id"
+    except (ValueError, TypeError):
         return False, "invalid_movie_id"
     if event_type not in VALID_EVENT_TYPES:
         return False, f"unknown_event_type:{event_type}"
@@ -262,6 +268,7 @@ def process_batch(batch_df, batch_id: int, r: redis_lib.Redis,
             "movie_id":   int(row.movie_id),
             "ts":         ts,
             "event_type": row.event_type,
+            "rating":     float(row.rating) if row.rating is not None else None,
         })
 
     now_ts = time.time()
@@ -385,7 +392,7 @@ def ensure_topic(bootstrap_servers: str, topic: str, num_partitions: int = 3) ->
     for i in range(30):
         try:
             parts = consumer.partitions_for_topic(topic)
-            if parts and len(parts) >= 1:
+            if parts and len(parts) >= num_partitions:
                 print(f"Topic '{topic}' ready: {len(parts)} partition(s)")
                 break
         except Exception:

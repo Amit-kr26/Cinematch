@@ -90,9 +90,11 @@ def create_app(lifespan_fn=None) -> FastAPI:
         response = await call_next(request)
         latency_ms = (time.monotonic() - t0) * 1000
         if REQUEST_LATENCY is not None:
+            route = request.scope.get("route")
+            endpoint = getattr(route, "path", request.url.path) if route else request.url.path
             REQUEST_LATENCY.labels(
                 method=request.method,
-                endpoint=request.url.path,
+                endpoint=endpoint,
             ).observe(latency_ms)
         return response
 

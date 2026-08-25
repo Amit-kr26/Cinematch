@@ -16,8 +16,16 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { Rec, Movie, EventType, SessionEvent } from './types'
 
 export default function App() {
-  // One random MovieLens viewer is assigned per session — no user picker.
-  const [activeId] = useState(() => Math.floor(Math.random() * 6040) + 1)
+  const [activeId] = useState(() => {
+    const stored = localStorage.getItem("cinematch:activeId")
+    if (stored) {
+      const n = parseInt(stored, 10)
+      if (n >= 1 && n <= 6040) return n
+    }
+    const fresh = Math.floor(Math.random() * 6040) + 1
+    localStorage.setItem("cinematch:activeId", String(fresh))
+    return fresh
+  })
   const [showWelcome, setShowWelcome] = useState(true)
   const [genres, setGenres]           = useState<string[]>([])
   const [search, setSearch]           = useState('')
@@ -36,7 +44,8 @@ export default function App() {
   const { data, loading, error, wsConnected, refetch } = useRecommendations(activeId)
   const { stats, refresh: refreshStats } = useStats()
   const { stage, sparkCountdown, fireEvent, notifyRedisUpdated } = usePipelineAnimation()
-  const { movies, total, hasMore, loading: browseLoading, loadingMore, loadMore } =
+  const { movies, total, hasMore, loading: browseLoading, loadingMore, loadMore,
+          error: browseError, retry: retryBrowse } =
     useMovies(debouncedSearch, genre)
 
   const scrollRef = useRef<HTMLElement | null>(null)
@@ -54,9 +63,14 @@ export default function App() {
   // Animate the Kafka→Spark→Redis pipeline when fresh recs land after an event
   const pendingPipeline = useRef(false)
   useEffect(() => {
-    if (pendingPipeline.current && data) {
+    if (pendingPipeline.current && data
+        && (data.source === 'redis' || data.source === 'postgres')
+        && data.variant === 'treatment') {
       pendingPipeline.current = false
       notifyRedisUpdated()
+    } else if (pendingPipeline.current && data && data.variant === 'control') {
+      // Control never gets re-ranked — clear the pending flag without animation
+      pendingPipeline.current = false
     }
   }, [data, notifyRedisUpdated])
 
@@ -81,7 +95,7 @@ export default function App() {
     }])
     pendingPipeline.current = true
     refreshStats()                       // events counter updates instantly
-    setTimeout(() => { refetch(); refreshStats() }, 3000)
+    setTimeout(() => { refetch(); refreshStats() }, 10500)
   }, [activeId, fireEvent, refetch, refreshStats])
 
   const handleHome = () => {
@@ -112,6 +126,7 @@ export default function App() {
       />
 
       <div className="flex flex-1 min-h-0">
+        <ErrorBoundary>
         <main ref={scrollRef} onScroll={onScroll} className="flex-1 min-w-0 px-6 py-5 overflow-y-auto">
           {!filtering && (
             <section className="mb-10">
@@ -119,6 +134,7 @@ export default function App() {
                 data={data}
                 loading={loading}
                 error={error}
+                onRetry={refetch}
                 onFireEvent={handleFireEvent}
                 onCardClick={setSelectedRec}
               />
@@ -137,7 +153,15 @@ export default function App() {
               {total > 0 && <span className="text-sm text-slate-500">{total.toLocaleString()} titles</span>}
             </div>
 
-            {!browseLoading && movies.length === 0 ? (
+            {browseError ? (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-10 text-center">
+                <p className="text-red-400 font-medium mb-3">Failed to load movies: {browseError}</p>
+                <button onClick={retryBrowse}
+                  className="px-4 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 text-sm font-medium border border-red-500/30">
+                  Retry
+                </button>
+              </div>
+            ) : !browseLoading && movies.length === 0 ? (
               <div className="rounded-xl border border-navy-600 bg-navy-800/50 p-10 text-center text-slate-400">
                 No movies found. Try a different search or genre.
               </div>
@@ -167,6 +191,7 @@ export default function App() {
             )}
           </section>
         </main>
+        </ErrorBoundary>
 
         <Sidebar sessionEvents={sessionEvents} />
       </div>
