@@ -1,6 +1,7 @@
 # CineMatch — Real-Time Movie Recommendation System
 
-
+> **🚀 Live Demo (lite build): [huggingface.co/spaces/Amit-kr26/Cinematch](https://huggingface.co/spaces/Amit-kr26/Cinematch)**
+> Full 10-service stack runs locally — see Quick Start below. The [`hf` branch](https://github.com/Amit-kr26/Cinematch/tree/hf) is a single-container SQLite build optimized for Spaces.
 
 End-to-end recommendation system: user events flow through Kafka → Spark Structured Streaming → ALS time-decay re-ranking → personalized top-10 served under 5 ms. Built on MovieLens 1M (1M ratings, 6,040 users, 3,883 movies).
 

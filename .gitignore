@@ -24,7 +24,6 @@ credentials.json
 !.gitattributes
 !.env.example
 !.python-version
-!.gitattributes
 
 # MovieLens dataset (downloaded at bootstrap, never committed)
 ml-1m/
