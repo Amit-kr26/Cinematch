@@ -10,6 +10,8 @@ pinned: false
 
 # CineMatch Lite — HuggingFace Spaces demo
 
+> **🚀 Live Demo:** [huggingface.co/spaces/Amit-kr26/Cinematch](https://huggingface.co/spaces/Amit-kr26/Cinematch) — this branch is what runs there.
+
 Single-container, SQLite-backed version of [CineMatch](https://github.com/Amit-kr26/Cinematch)
 (the full Kafka → Spark → ALS streaming stack lives on the `main` branch).
 Cold start is instant: recommendations ship pre-trained in `app/seed/als_seed.sqlite.gz`
