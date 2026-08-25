@@ -7,8 +7,8 @@ Same math as services/spark-jobs/streaming.py on the main branch:
       rating_weight: 0.4 + star/5 × 0.6   (any rating beats any view)
     pref          = Σ weight_i × item_factor[movie_i]   (unit-normalised)
     score         = dot(pref, item_factor) + α × genre_overlap
-                    sign(s)·|s|·0.7^(c−2) for over-represented genres
-                    (sign-safe: CF dot products are frequently negative)
+                    positives: s × 0.7^(c−2) / negatives: s ÷ 0.7^(c−2),
+                    c = earlier same-genre titles (from 4th: ×0.70, ×0.49…)
 
 Runs in-process on the driver-sized candidate pool (~3.7k movies) so no
 Spark/Kafka is needed; recommendations still react to every event.

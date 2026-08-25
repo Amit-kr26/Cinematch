@@ -5,7 +5,7 @@ interface Props {
   movies:      Movie[]
   loading?:    boolean
   skeletonCount?: number
-  onFireEvent: (movie: Movie, eventType: EventType, rating?: number) => void
+  onFireEvent: (movie: Movie, eventType: EventType, rating?: number) => Promise<void> | void
   onCardClick: (movie: Movie) => void
 }
 
@@ -31,7 +31,7 @@ export function MovieGrid({ movies, loading, skeletonCount = 12, onFireEvent, on
               key={m.movie_id}
               rec={m}
               index={i}
-              onFireEvent={(type, rating) => { Promise.resolve(onFireEvent(m, type, rating)).catch(() => {}) }}
+              onFireEvent={(type, rating) => onFireEvent(m, type, rating)}
               onCardClick={() => onCardClick(m)}
             />
           ))}

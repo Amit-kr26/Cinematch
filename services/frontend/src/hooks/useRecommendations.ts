@@ -10,9 +10,7 @@ export function useRecommendations(userId: number | null, pollMs = 5000) {
   const wsRef = useRef<WebSocket | null>(null)
   const lastPushAt = useRef(0)
 
-  // WebSocket path — receives push updates when Spark writes new recs.
-  // Auto-reconnects with capped backoff; without this, any drop (API restart,
-  // proxy timeout) silently downgraded the session to polling forever.
+  // WebSocket path — receives push updates when Spark writes new recs
   useEffect(() => {
     if (!userId) return
     let closed = false

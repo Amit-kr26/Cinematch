@@ -8,7 +8,7 @@ import { Tooltip } from './Tooltip'
 interface Props {
   rec:         Rec
   index:       number
-  onFireEvent: (eventType: EventType, rating?: number) => void
+  onFireEvent: (eventType: EventType, rating?: number) => Promise<void> | void
   onCardClick: () => void
 }
 
@@ -35,20 +35,28 @@ export function MovieCard({ rec, index, onFireEvent, onCardClick }: Props) {
   const year       = extractYear(rec.title)
   const cleanTitle = formatTitle(rec.title)
   const hasScore   = rec.score != null
-  // Server computes a per-layer normalized badge (score_pct); the local
-  // normalizeScore is only a fallback for payloads that predate it.
   const score      = rec.score_pct ?? normalizeScore(rec.score ?? 0)
 
-  const handleStar = (n: number, e: React.MouseEvent) => {
+  const handleStar = async (n: number, e: React.MouseEvent) => {
     e.stopPropagation()
-    onFireEvent('rating', n)
-    setSentState(`★${n}`)
+    try {
+      await onFireEvent('rating', n)
+      setSentState(`★${n}`)
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      setSentState(status === 429 ? 'Rate limited' : 'Failed')
+    }
     setTimeout(() => setSentState(null), 1400)
   }
-  const handleAction = (type: EventType, e: React.MouseEvent) => {
+  const handleAction = async (type: EventType, e: React.MouseEvent) => {
     e.stopPropagation()
-    onFireEvent(type)
-    setSentState(type)
+    try {
+      await onFireEvent(type)
+      setSentState(type)
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      setSentState(status === 429 ? 'Rate limited' : 'Failed')
+    }
     setTimeout(() => setSentState(null), 1400)
   }
 
@@ -90,8 +98,8 @@ export function MovieCard({ rec, index, onFireEvent, onCardClick }: Props) {
           onClick={(e) => e.stopPropagation()}
         >
           {sentState ? (
-            <div className="py-1 text-center text-sm font-semibold text-emerald-400">
-              ✓ {sentState} sent
+            <div className={`py-1 text-center text-sm font-semibold ${sentState === 'Rate limited' || sentState === 'Failed' ? 'text-red-400' : 'text-emerald-400'}`}>
+              {sentState === 'Rate limited' || sentState === 'Failed' ? `✗ ${sentState}` : `✓ ${sentState} sent`}
             </div>
           ) : (
             <>
